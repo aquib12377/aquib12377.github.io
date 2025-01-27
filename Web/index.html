@@ -2,52 +2,93 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <title>Parking Data (RGB565)</title>
+  <title>Smart Parking Records</title>
+  <!-- Minimal and Responsive Styling -->
   <style>
     body {
-      font-family: sans-serif;
+      font-family: Arial, sans-serif;
       margin: 20px;
+      background-color: #f9f9f9;
+    }
+    h1 {
+      text-align: center;
+      color: #333;
     }
     table {
       border-collapse: collapse;
       width: 100%;
-      max-width: 800px;
+      max-width: 1200px;
+      margin: 0 auto;
+      background-color: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     th, td {
-      border: 1px solid #ccc;
-      padding: 8px;
-      text-align: left;
+      border: 1px solid #ddd;
+      padding: 12px;
+      text-align: center;
     }
     th {
-      background-color: #f1f1f1;
+      background-color: #4CAF50;
+      color: white;
     }
+    tr:nth-child(even){background-color: #f2f2f2;}
+    tr:hover {background-color: #e9e9e9;}
     canvas {
       border: 1px solid #ccc;
-      max-width: 150px; /* You can adjust or remove as needed */
+      width: 150px;
       height: auto;
+    }
+    /* Loader Styles */
+    #loader {
+      border: 8px solid #f3f3f3;
+      border-top: 8px solid #4CAF50;
+      border-radius: 50%;
+      width: 60px;
+      height: 60px;
+      animation: spin 1s linear infinite;
+      margin: 50px auto;
+      display: none;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    /* No Data Message */
+    #noDataMessage {
+      text-align: center;
+      color: #777;
+      padding: 20px;
     }
   </style>
 </head>
 <body>
-  <h1>Parking Records - RGB565 Demo</h1>
+  <h1>Smart Parking Records</h1>
+  
+  <!-- Loader -->
+  <div id="loader"></div>
+  
+  <!-- Table to Display Parking Records -->
   <table id="parkingTable">
     <thead>
       <tr>
         <th>Vehicle Name</th>
         <th>Vehicle Number</th>
         <th>Entry Time</th>
-        <th>Image (RGB565)</th>
+        <th>Image</th>
       </tr>
     </thead>
     <tbody>
-      <!-- Rows will be dynamically injected -->
+      <!-- Rows will be dynamically injected here -->
     </tbody>
   </table>
-
+  
+  <!-- No Data Message -->
+  <div id="noDataMessage">Loading parking records...</div>
+  
   <!-- Firebase JS SDK (v8) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
-
+  
   <script>
     /****************************************************
      * 1) Your Firebase configuration
@@ -62,140 +103,186 @@
       appId: "1:408901887226:web:323704f87ca55b3c4cd543",
       measurementId: "G-QZN5V345X9"
     };
-
+    
     /****************************************************
      * 2) Initialize Firebase
      ****************************************************/
     firebase.initializeApp(firebaseConfig);
-
-    // Reference your Realtime Database path
-    var dbRef = firebase.database().ref("/parkingRecords");
-
+    
+    // Reference to the Realtime Database path
+    const dbRef = firebase.database().ref("/parkingRecords");
+    
     /****************************************************
-     * 3) Helper: Convert 16-bit RGB565 to (R,G,B)
+     * 3) Helper Function: Convert 16-bit RGB565 to 24-bit RGB888
      ****************************************************/
     function rgb565ToRgb888(pixel16) {
-      // pixel16 is: bits 15-11 = R(5), bits 10-5 = G(6), bits 4-0 = B(5)
+      // Extract color components
       let r = (pixel16 & 0xF800) >> 11; // 5 bits
       let g = (pixel16 & 0x07E0) >> 5;  // 6 bits
       let b = (pixel16 & 0x001F);       // 5 bits
-
-      // Scale up to 8-bit [0..255]
-      r = (r * 255) / 31;
-      g = (g * 255) / 63;
-      b = (b * 255) / 31;
-
+      
+      // Scale to 8-bit values
+      r = Math.round((r * 255) / 31);
+      g = Math.round((g * 255) / 63);
+      b = Math.round((b * 255) / 31);
+      
       return [r, g, b];
     }
-
+    
     /****************************************************
-     * 4) Draw RGB565 data onto a <canvas>
+     * 4) Function to Draw RGB565 Image on Canvas
      ****************************************************/
     function drawRGB565(canvas, base64Data, width, height) {
       const ctx = canvas.getContext('2d');
-      // Set canvas size
+      // Set canvas dimensions
       canvas.width = width;
       canvas.height = height;
-
-      // 1) Decode Base64 to binary
-      const raw = atob(base64Data); 
-      const len = raw.length;
+      
+      // Decode Base64 to binary string
+      const binaryString = atob(base64Data);
+      const len = binaryString.length;
       const bytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) {
-        bytes[i] = raw.charCodeAt(i);
+        bytes[i] = binaryString.charCodeAt(i);
       }
-
-      // 2) Check size
-      const expectedSize = width * height * 2;
+      
+      // Verify the byte length matches expected size
+      const expectedSize = width * height * 2; // 2 bytes per pixel for RGB565
       if (bytes.length !== expectedSize) {
-        console.warn(`Size mismatch: got ${bytes.length} bytes, expected ${expectedSize}`);
+        console.warn(`Size mismatch: expected ${expectedSize} bytes, got ${bytes.length} bytes`);
       }
-
-      // 3) Create an ImageData (RGBA)
+      
+      // Create ImageData object
       const imageData = ctx.createImageData(width, height);
       let dataIndex = 0;
+      
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-          // Bytes come LSB first typically: [byte1, byte2] => 16-bit
-          // If colors look odd, try reversing:
-          // const pixel16 = (byte1 << 8) | byte2;
-          const byte1 = bytes[dataIndex];
-          const byte2 = bytes[dataIndex + 1];
-          dataIndex += 2;
-
-          // Combine
+          // Combine two bytes into one 16-bit pixel
+          const byte1 = bytes[dataIndex++];
+          const byte2 = bytes[dataIndex++];
           const pixel16 = (byte2 << 8) | byte1;
+          
+          // Convert to RGB888
           const [r, g, b] = rgb565ToRgb888(pixel16);
-
-          const idx = (y * width + x) * 4; // RGBA
-          imageData.data[idx + 0] = r;
-          imageData.data[idx + 1] = g;
-          imageData.data[idx + 2] = b;
-          imageData.data[idx + 3] = 255; 
+          
+          // Set pixel data (RGBA)
+          const idx = (y * width + x) * 4;
+          imageData.data[idx] = r;     // Red
+          imageData.data[idx + 1] = g; // Green
+          imageData.data[idx + 2] = b; // Blue
+          imageData.data[idx + 3] = 255; // Alpha (opaque)
         }
       }
-
-      // 4) Render onto canvas
+      
+      // Draw the ImageData onto the canvas
       ctx.putImageData(imageData, 0, 0);
     }
-
+    
     /****************************************************
-     * 5) Listen for data & build table
+     * 5) Function to Populate the Parking Records Table
      ****************************************************/
-    dbRef.on("value", function(snapshot) {
-      var data = snapshot.val();
-      if (!data) {
-        document.querySelector("#parkingTable tbody").innerHTML =
-          "<tr><td colspan='4'>No data found</td></tr>";
-        return;
-      }
-
-      var entries = Object.entries(data); 
-      var tableBodyHtml = "";
-
-      // For demonstration, we assume a single resolution for all images
-      // Adjust or store resolution in DB if needed
-      const FRAME_WIDTH = 320;
-      const FRAME_HEIGHT = 240;
-
-      // Build table rows
-      entries.forEach(function([key, record]) {
-        var vehicleName   = record.vehicleName   || "";
-        var vehicleNumber = record.vehicleNumber || "";
-        var entryTime     = record.entryTime     || "";
-        var imageBase64   = record.imageBase64   || ""; 
-
-        // We'll create a placeholder for <canvas> with a unique ID
-        const canvasID = "canvas_" + key;
-
-        tableBodyHtml += `
-          <tr>
-            <td>${vehicleName}</td>
-            <td>${vehicleNumber}</td>
-            <td>${entryTime}</td>
-            <td>
-              <canvas id="${canvasID}"></canvas>
-            </td>
-          </tr>
-        `;
-      });
-
-      // Insert rows
-      document.querySelector("#parkingTable tbody").innerHTML = tableBodyHtml;
-
-      // Now that the <canvas> elements exist, draw the images
-      entries.forEach(function([key, record]) {
-        var imageBase64 = record.imageBase64 || ""; 
-        var canvas = document.getElementById("canvas_" + key);
-
-        // If there's a canvas and data, draw it
-        if (canvas && imageBase64) {
-          drawRGB565(canvas, imageBase64, FRAME_WIDTH, FRAME_HEIGHT);
+    function populateTable(records) {
+      const tableBody = document.querySelector("#parkingTable tbody");
+      const loader = document.getElementById("loader");
+      const noDataMessage = document.getElementById("noDataMessage");
+      
+      // Clear existing table rows
+      tableBody.innerHTML = "";
+      
+      // Hide loader and no data message
+      loader.style.display = "none";
+      noDataMessage.style.display = "none";
+      
+      // Iterate through each parking record
+      records.forEach(([key, record]) => {
+        const vehicleName = record.vehicleName || "N/A";
+        const vehicleNumber = record.vehicleNumber || "N/A";
+        const entryTime = record.entryTime || "N/A";
+        const imageBase64 = record.imageBase64 || "";
+        const width = record.width || 320;  // Default width
+        const height = record.height || 240; // Default height
+        
+        // Create table row
+        const tr = document.createElement("tr");
+        
+        // Vehicle Name Cell
+        const tdName = document.createElement("td");
+        tdName.textContent = vehicleName;
+        tr.appendChild(tdName);
+        
+        // Vehicle Number Cell
+        const tdNumber = document.createElement("td");
+        tdNumber.textContent = vehicleNumber;
+        tr.appendChild(tdNumber);
+        
+        // Entry Time Cell
+        const tdTime = document.createElement("td");
+        tdTime.textContent = entryTime;
+        tr.appendChild(tdTime);
+        
+        // Image Canvas Cell
+        const tdImage = document.createElement("td");
+        const canvas = document.createElement("canvas");
+        canvas.id = `canvas_${key}`;
+        tdImage.appendChild(canvas);
+        tr.appendChild(tdImage);
+        
+        // Append row to table body
+        tableBody.appendChild(tr);
+        
+        // Draw the image on the canvas
+        if (imageBase64) {
+          drawRGB565(canvas, imageBase64, width, height);
+        } else {
+          // Placeholder if no image data
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = "#eee";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#555";
+          ctx.font = "14px Arial";
+          ctx.textAlign = "center";
+          ctx.fillText("No Image", canvas.width / 2, canvas.height / 2);
         }
       });
-
-    }, function (error) {
-      console.log("Error: " + error.code);
+      
+      // If no records, show no data message
+      if (records.length === 0) {
+        noDataMessage.textContent = "No parking records available.";
+        noDataMessage.style.display = "block";
+      }
+    }
+    
+    /****************************************************
+     * 6) Fetch and Listen to Parking Records from Firebase
+     ****************************************************/
+    dbRef.on("value", (snapshot) => {
+      const data = snapshot.val();
+      
+      if (!data) {
+        populateTable([]);
+        return;
+      }
+      
+      // Convert data object to array of [key, value] pairs
+      const records = Object.entries(data);
+      
+      populateTable(records);
+    }, (error) => {
+      console.error("Error fetching data: ", error);
+      alert("Failed to fetch parking records. Check console for details.");
+    });
+    
+    /****************************************************
+     * 7) Show Loader Initially
+     ****************************************************/
+    window.addEventListener('load', () => {
+      const loader = document.getElementById("loader");
+      const noDataMessage = document.getElementById("noDataMessage");
+      
+      // Show loader while data is being fetched
+      loader.style.display = "block";
+      noDataMessage.style.display = "none";
     });
   </script>
 </body>

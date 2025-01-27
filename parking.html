@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Parking Data (RGB565)</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      max-width: 800px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f1f1f1;
+    }
+    canvas {
+      border: 1px solid #ccc;
+      max-width: 150px; /* You can adjust or remove as needed */
+      height: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>Parking Records - RGB565 Demo</h1>
+  <table id="parkingTable">
+    <thead>
+      <tr>
+        <th>Vehicle Name</th>
+        <th>Vehicle Number</th>
+        <th>Entry Time</th>
+        <th>Image (RGB565)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Rows will be dynamically injected -->
+    </tbody>
+  </table>
+
+  <!-- Firebase JS SDK (v8) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+  <script>
+    /****************************************************
+     * 1) Your Firebase configuration
+     ****************************************************/
+    const firebaseConfig = {
+      apiKey: "AIzaSyBUjHE2I_o7mVHYEZiMJ_AMQS7-dQ0SwtE",
+      authDomain: "thermalimagesstorage.firebaseapp.com",
+      databaseURL: "https://smartparkingdata.firebaseio.com",
+      projectId: "thermalimagesstorage",
+      storageBucket: "thermalimagesstorage.firebasestorage.app",
+      messagingSenderId: "408901887226",
+      appId: "1:408901887226:web:323704f87ca55b3c4cd543",
+      measurementId: "G-QZN5V345X9"
+    };
+
+    /****************************************************
+     * 2) Initialize Firebase
+     ****************************************************/
+    firebase.initializeApp(firebaseConfig);
+
+    // Reference your Realtime Database path
+    var dbRef = firebase.database().ref("/parkingRecords");
+
+    /****************************************************
+     * 3) Helper: Convert 16-bit RGB565 to (R,G,B)
+     ****************************************************/
+    function rgb565ToRgb888(pixel16) {
+      // pixel16 is: bits 15-11 = R(5), bits 10-5 = G(6), bits 4-0 = B(5)
+      let r = (pixel16 & 0xF800) >> 11; // 5 bits
+      let g = (pixel16 & 0x07E0) >> 5;  // 6 bits
+      let b = (pixel16 & 0x001F);       // 5 bits
+
+      // Scale up to 8-bit [0..255]
+      r = (r * 255) / 31;
+      g = (g * 255) / 63;
+      b = (b * 255) / 31;
+
+      return [r, g, b];
+    }
+
+    /****************************************************
+     * 4) Draw RGB565 data onto a <canvas>
+     ****************************************************/
+    function drawRGB565(canvas, base64Data, width, height) {
+      const ctx = canvas.getContext('2d');
+      // Set canvas size
+      canvas.width = width;
+      canvas.height = height;
+
+      // 1) Decode Base64 to binary
+      const raw = atob(base64Data); 
+      const len = raw.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = raw.charCodeAt(i);
+      }
+
+      // 2) Check size
+      const expectedSize = width * height * 2;
+      if (bytes.length !== expectedSize) {
+        console.warn(`Size mismatch: got ${bytes.length} bytes, expected ${expectedSize}`);
+      }
+
+      // 3) Create an ImageData (RGBA)
+      const imageData = ctx.createImageData(width, height);
+      let dataIndex = 0;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          // Bytes come LSB first typically: [byte1, byte2] => 16-bit
+          // If colors look odd, try reversing:
+          // const pixel16 = (byte1 << 8) | byte2;
+          const byte1 = bytes[dataIndex];
+          const byte2 = bytes[dataIndex + 1];
+          dataIndex += 2;
+
+          // Combine
+          const pixel16 = (byte2 << 8) | byte1;
+          const [r, g, b] = rgb565ToRgb888(pixel16);
+
+          const idx = (y * width + x) * 4; // RGBA
+          imageData.data[idx + 0] = r;
+          imageData.data[idx + 1] = g;
+          imageData.data[idx + 2] = b;
+          imageData.data[idx + 3] = 255; 
+        }
+      }
+
+      // 4) Render onto canvas
+      ctx.putImageData(imageData, 0, 0);
+    }
+
+    /****************************************************
+     * 5) Listen for data & build table
+     ****************************************************/
+    dbRef.on("value", function(snapshot) {
+      var data = snapshot.val();
+      if (!data) {
+        document.querySelector("#parkingTable tbody").innerHTML =
+          "<tr><td colspan='4'>No data found</td></tr>";
+        return;
+      }
+
+      var entries = Object.entries(data); 
+      var tableBodyHtml = "";
+
+      // For demonstration, we assume a single resolution for all images
+      // Adjust or store resolution in DB if needed
+      const FRAME_WIDTH = 320;
+      const FRAME_HEIGHT = 240;
+
+      // Build table rows
+      entries.forEach(function([key, record]) {
+        var vehicleName   = record.vehicleName   || "";
+        var vehicleNumber = record.vehicleNumber || "";
+        var entryTime     = record.entryTime     || "";
+        var imageBase64   = record.imageBase64   || ""; 
+
+        // We'll create a placeholder for <canvas> with a unique ID
+        const canvasID = "canvas_" + key;
+
+        tableBodyHtml += `
+          <tr>
+            <td>${vehicleName}</td>
+            <td>${vehicleNumber}</td>
+            <td>${entryTime}</td>
+            <td>
+              <canvas id="${canvasID}"></canvas>
+            </td>
+          </tr>
+        `;
+      });
+
+      // Insert rows
+      document.querySelector("#parkingTable tbody").innerHTML = tableBodyHtml;
+
+      // Now that the <canvas> elements exist, draw the images
+      entries.forEach(function([key, record]) {
+        var imageBase64 = record.imageBase64 || ""; 
+        var canvas = document.getElementById("canvas_" + key);
+
+        // If there's a canvas and data, draw it
+        if (canvas && imageBase64) {
+          drawRGB565(canvas, imageBase64, FRAME_WIDTH, FRAME_HEIGHT);
+        }
+      });
+
+    }, function (error) {
+      console.log("Error: " + error.code);
+    });
+  </script>
+</body>
+</html>

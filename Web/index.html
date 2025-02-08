@@ -140,74 +140,29 @@
     const dbRef = firebase.database().ref("/parkingRecords");
 
     /****************************************************
-     * 3) Helper Function: Convert 16-bit RGB565 to 24-bit RGB888
+     * 3) Function to Draw JPEG Image on Canvas
+     *
+     * Instead of decoding raw pixel data, we create an Image
+     * element with the base64 data and draw it onto the canvas.
      ****************************************************/
-    function rgb565ToRgb888(pixel16) {
-      // Extract color components
-      let r = (pixel16 & 0xF800) >> 11; // 5 bits
-      let g = (pixel16 & 0x07E0) >> 5;  // 6 bits
-      let b = (pixel16 & 0x001F);       // 5 bits
-
-      // Scale to 8-bit values
-      r = Math.round((r * 255) / 31);
-      g = Math.round((g * 255) / 63);
-      b = Math.round((b * 255) / 31);
-
-      return [r, g, b];
-    }
-
-    /****************************************************
-     * 4) Function to Draw RGB565 Image on Canvas
-     ****************************************************/
-    function drawRGB565(canvas, base64Data, width, height) {
+    function drawJpeg(canvas, base64Data, width, height) {
       const ctx = canvas.getContext('2d');
-      // Set canvas dimensions
-      canvas.width = width;
-      canvas.height = height;
-
-      // Decode Base64 to binary string
-      const binaryString = atob(base64Data);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      // Verify the byte length matches expected size
-      const expectedSize = width * height * 2; // 2 bytes per pixel for RGB565
-      if (bytes.length !== expectedSize) {
-        console.warn(`Size mismatch: expected ${expectedSize} bytes, got ${bytes.length} bytes`);
-      }
-
-      // Create ImageData object
-      const imageData = ctx.createImageData(width, height);
-      let dataIndex = 0;
-
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          // Combine two bytes into one 16-bit pixel
-          const byte1 = bytes[dataIndex++];
-          const byte2 = bytes[dataIndex++];
-          const pixel16 = (byte2 << 8) | byte1;
-
-          // Convert to RGB888
-          const [r, g, b] = rgb565ToRgb888(pixel16);
-
-          // Set pixel data (RGBA)
-          const idx = (y * width + x) * 4;
-          imageData.data[idx] = r;         // Red
-          imageData.data[idx + 1] = g;     // Green
-          imageData.data[idx + 2] = b;     // Blue
-          imageData.data[idx + 3] = 255;   // Alpha (opaque)
-        }
-      }
-
-      // Draw the ImageData onto the canvas
-      ctx.putImageData(imageData, 0, 0);
+      const img = new Image();
+      img.onload = function () {
+        // Set canvas dimensions as desired (you can also use img.width and img.height)
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0, width, height);
+      };
+      img.onerror = function (error) {
+        console.error("Error loading JPEG image:", error);
+      };
+      // Set the image source to the base64-encoded JPEG data
+      img.src = "data:image/jpeg;base64," + base64Data;
     }
 
     /****************************************************
-     * 5) Function to Populate the Parking Records Table
+     * 4) Function to Populate the Parking Records Table
      ****************************************************/
     function populateTable(records) {
       const tableBody = document.querySelector("#parkingTable tbody");
@@ -243,10 +198,9 @@
         "Ferrari"
       ];
 
-
       // Iterate through each parking record
       records.forEach(([key, record]) => {
-        // 1) VehicleName replaced by random plate
+        // 1) Vehicle Name replaced by a random plate
         let randomVehicle = randomPlates[Math.floor(Math.random() * randomPlates.length)];
 
         // 2) Other fields fetched from Firebase if available
@@ -255,8 +209,7 @@
         const exitTime = record.exitTime || "N/A";
         const imageBase64 = record.imageBase64 || "";
 
-        // You can optionally define width/height from record
-        // If not set, we’ll default to 320x240
+        // Optionally define width/height from record or default to 320x240
         const width = record.width || 320;
         const height = record.height || 240;
 
@@ -268,40 +221,41 @@
         tdName.textContent = randomVehicle;
         tr.appendChild(tdName);
 
-        // (B) Vehicle Number Cell (from Firebase)
-
-        // (C) Entry Time Cell
+        // (B) Entry Time Cell
         const tdEntry = document.createElement("td");
         tdEntry.textContent = entryTime;
         tr.appendChild(tdEntry);
 
-        // (D) Exit Time Cell
+        // (C) Exit Time Cell
         const tdExit = document.createElement("td");
         tdExit.textContent = exitTime;
         tr.appendChild(tdExit);
 
-        // (E) Image Cell
+        // (D) Image Cell
         const tdImage = document.createElement("td");
         const canvas = document.createElement("canvas");
         canvas.id = `canvas_${key}`;
+        // Set canvas dimensions for the placeholder even if no image is available
+        canvas.width = width;
+        canvas.height = height;
         tdImage.appendChild(canvas);
         tr.appendChild(tdImage);
 
         // Append row to table body
         tableBody.appendChild(tr);
 
-        // Draw the image on the canvas if imageBase64 exists
+        // Draw the JPEG image on the canvas if imageBase64 exists
         if (imageBase64) {
-          drawRGB565(canvas, imageBase64, width, height);
+          drawJpeg(canvas, imageBase64, width, height);
         } else {
           // Placeholder if no image data
           const ctx = canvas.getContext('2d');
           ctx.fillStyle = "#eee";
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillRect(0, 0, width, height);
           ctx.fillStyle = "#555";
           ctx.font = "14px Arial";
           ctx.textAlign = "center";
-          ctx.fillText("No Image", canvas.width / 2, canvas.height / 2);
+          ctx.fillText("No Image", width / 2, height / 2);
         }
       });
 
@@ -313,7 +267,7 @@
     }
 
     /****************************************************
-     * 6) Fetch and Listen to Parking Records from Firebase
+     * 5) Fetch and Listen to Parking Records from Firebase
      ****************************************************/
     dbRef.on("value", (snapshot) => {
       const data = snapshot.val();
@@ -323,9 +277,8 @@
         return;
       }
 
-      // Convert data object to array of [key, value] pairs
+      // Convert data object to an array of [key, value] pairs
       const records = Object.entries(data);
-
       populateTable(records);
     }, (error) => {
       console.error("Error fetching data: ", error);
@@ -333,7 +286,7 @@
     });
 
     /****************************************************
-     * 7) Show Loader Initially
+     * 6) Show Loader Initially
      ****************************************************/
     window.addEventListener('load', () => {
       const loader = document.getElementById("loader");

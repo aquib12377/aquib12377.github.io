@@ -97,9 +97,9 @@
         <th>Vehicle Name</th>
         <!-- 2) Vehicle Number (fetched from Firebase if available) -->
         <!-- 3) Entry Time -->
-        <th>Entry Time</th>
+        <th>Entry Time (IST)</th>
         <!-- 4) Exit Time -->
-        <th>Exit Time</th>
+        <th>Exit Time (IST)</th>
         <!-- 5) Image -->
         <th>Image</th>
       </tr>
@@ -140,7 +140,23 @@
     const dbRef = firebase.database().ref("/parkingRecords");
 
     /****************************************************
-     * 3) Function to Draw JPEG Image on Canvas
+     * 3) Helper Function: Convert UTC Date/Time to IST
+     *
+     * This function takes a UTC date/time string and converts
+     * it to Indian Standard Time (IST) using the Asia/Kolkata timezone.
+     ****************************************************/
+    function convertToIST(utcDateString) {
+      const date = new Date(utcDateString);
+      // Check if the date is valid
+      if (isNaN(date.getTime())) {
+        return "Invalid Date";
+      }
+      // Convert to IST using the toLocaleString method with timeZone set to Asia/Kolkata
+      return date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: false });
+    }
+
+    /****************************************************
+     * 4) Function to Draw JPEG Image on Canvas
      *
      * Instead of decoding raw pixel data, we create an Image
      * element with the base64 data and draw it onto the canvas.
@@ -162,7 +178,7 @@
     }
 
     /****************************************************
-     * 4) Function to Populate the Parking Records Table
+     * 5) Function to Populate the Parking Records Table
      ****************************************************/
     function populateTable(records) {
       const tableBody = document.querySelector("#parkingTable tbody");
@@ -205,8 +221,9 @@
 
         // 2) Other fields fetched from Firebase if available
         const vehicleNumber = record.vehicleNumber || "N/A";
-        const entryTime = record.entryTime || "N/A";
-        const exitTime = record.exitTime || "N/A";
+        // Convert entryTime and exitTime from UTC to IST if available
+        const entryTime = record.entryTime ? convertToIST(record.entryTime) : "N/A";
+        const exitTime = record.exitTime ? convertToIST(record.exitTime) : "N/A";
         const imageBase64 = record.imageBase64 || "";
 
         // Optionally define width/height from record or default to 320x240
@@ -221,12 +238,12 @@
         tdName.textContent = randomVehicle;
         tr.appendChild(tdName);
 
-        // (B) Entry Time Cell
+        // (B) Entry Time Cell (converted to IST)
         const tdEntry = document.createElement("td");
         tdEntry.textContent = entryTime;
         tr.appendChild(tdEntry);
 
-        // (C) Exit Time Cell
+        // (C) Exit Time Cell (converted to IST)
         const tdExit = document.createElement("td");
         tdExit.textContent = exitTime;
         tr.appendChild(tdExit);
@@ -267,7 +284,7 @@
     }
 
     /****************************************************
-     * 5) Fetch and Listen to Parking Records from Firebase
+     * 6) Fetch and Listen to Parking Records from Firebase
      ****************************************************/
     dbRef.on("value", (snapshot) => {
       const data = snapshot.val();
@@ -286,7 +303,7 @@
     });
 
     /****************************************************
-     * 6) Show Loader Initially
+     * 7) Show Loader Initially
      ****************************************************/
     window.addEventListener('load', () => {
       const loader = document.getElementById("loader");
